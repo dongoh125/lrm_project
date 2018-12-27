@@ -1,0 +1,189 @@
+---
+title: "Project_LRM"
+author: "Dongoh Shin, ds3709"
+date: "Dec 3, 2018"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data import
+
+```{r}
+data <- read.table("salary.txt", sep = ",", header = T)
+edupoly <- poly(data$edu, 2); exppoly <- poly(data$exp, 3); data$edu1 <- edupoly[,1]; data$edu2 <- edupoly[,2]; data$exp1 <- exppoly[,1]; data$exp2 <- exppoly[,2]; data$exp3 <- exppoly[,3]
+data$reg.ne.dummy <- ifelse(data$reg == "northeast", 1, 0)
+data$reg.s.dummy <- ifelse(data$reg == "south", 1, 0)
+data$reg.w.dummy <- ifelse(data$reg == "west", 1, 0)
+data$dummywhite <- ifelse(data$race == "white", 1, 0)
+data$dummyother <- ifelse(data$race == "other", 1, 0)
+```
+
+## 1. Introduction
+
+The goal of this analysis is to find a relationship between the response variable of ¡°wage¡± and main predictor of ¡°race.¡± In details, we are going to find out if African American males receive statistically different wages compared with the other races and Caucasian American males.
+
+As we see plots as below, it seems that there is some relationship between wage and race. Moreover, we can notice the differences as we check the exact medians and means of wage by race.
+
+```{r}
+plot(log(wage)~race, data = data, xlab = "Race", ylab = "Wage (log)", main = "Wage vs Race")
+log(median(data$wage[data$race == "black"])); log(median(data$wage[data$race == "white"])); log(median(data$wage[data$race == "other"]))
+log(mean(data$wage[data$race == "black"])); log(mean(data$wage[data$race == "white"])); log(mean(data$wage[data$race == "other"]))
+```
+
+Here are some plots which show the relationship between the response variable and the continuous predictors. It seems we can find out meaningful relations with wage in years of education and work experience from the first two plots in the first row.
+
+```{r}
+par(mfrow = c(2,2))
+plot(log(wage)~edu, data = data, main = "Log of wage vs Years of education", xlab = "Years of education"); abline(lm(log(wage)~edu, data= data), col = 2, cex.main = 0.5)
+plot(log(wage)~exp, data = data, main = "Log of wage vs Years of work experience", xlab = "Years of work experience"); abline(lm(log(wage)~exp, data= data), col = 2, cex.main = 0.5)
+plot(log(wage)~com, data = data, main = "Log of wage vs Commuting time", xlab = "Commuting time"); abline(lm(log(wage)~com, data= data), col = 2, cex.main = 0.5)
+plot(log(wage)~emp, data = data, main = "Log of wage vs The number of employees", xlab = "The number of employees"); abline(lm(log(wage)~emp, data= data), col = 2, cex.main = 0.5)
+```
+
+## 2. Statistical Model
+
+My final model is as below:
+
+```{r}
+final.model <- lm(log(wage) ~ dummywhite + dummyother + edu1 + edu2 + exp1 + exp2 + exp3 + city + city*edu1+ reg.ne.dummy +reg.s.dummy + reg.ne.dummy*exp1 + reg.s.dummy*exp1 + emp, data = data)
+bad.model <- lm(wage ~ edu + exp + city + reg + deg + emp + race, data = data)
+summary(final.model); summary(bad.model)
+AIC(final.model); AIC(bad.model)
+```
+
+As we compare the final model with the pure model named "bad.model", $R^2$ and $R^2_a$ of the final model are higher than those of the pure model. 
+
+From now I am going to explain the reason why I have built the final model that way above.
+
+```{r}
+library(MASS)
+boxcox(lm(wage ~ edu + exp + city + reg + deg + com + emp + race, data = data))
+```
+
+As a matter of fact, boxcox procedure is a model validation procedure but I put this here first to explain why we take a log on the response variable. As we see the plot above, $\lambda$ is close to 0. Hence, we have to take a log on the response variable to increase the power of the model. Next, I want to show which variables I should exclude.
+
+```{r}
+library(leaps)
+predictors <- cbind(data$edu, data$exp, data$city, data$reg, data$deg, data$com, data$emp, data$race)
+regsubsets.sub <- regsubsets(x = predictors, y = log(data$wage))
+plot(regsubsets.sub, scale = "Cp")
+AIC(lm(log(wage) ~ edu + exp + city + reg + deg + emp + race, data = data)); AIC(lm(log(wage) ~ edu + exp + city + reg + deg + com + emp + race, data = data))
+```
+
+We can throw away commuting time variable as the regsubsets plot suggests above. We can be more assured that we should take the commuting time variable out if we check the AICs of the models each with and without the variable. Next, I would like to find out there is any need for putting higher orders on the variables.
+
+```{r}
+par(mfrow = c(1, 2))
+boxplot(log(wage) ~ edu, data = data, xlab = "Years of education", ylab = "Log of wage", main = "Log (wage) vs Years of education"); lines(supsmu(data$edu, log(data$wage)), col = "red", lwd = 2, cex.main = 0.5)
+boxplot(log(wage) ~ exp, data = data, xlab = "Years of work experience", ylab = "Log of wage", main = "Log (wage) vs Years of work experience"); lines(supsmu(data$exp, log(data$wage)), col = "blue", lwd = 2, cex.main = 0.5)
+```
+
+As we see the two boxplots, the relationships between wage and the predictors are not merely linear so I square them. However, the correlation among the variables are too high. Therefore, I use orthogonal polynomials. We can see the difference caused by using orthogonal polynomials right down below.
+
+```{r}
+round(cor(data.frame(data$edu, (data$edu)^2, data$exp, (data$exp)^2, (data$exp)^3)), 3)
+round(cor(data.frame(data$edu1, data$edu2, data$exp1, data$exp2, data$exp3)), 3)
+```
+
+Next, we want to find out interaction effects between continuous and categorical variables.
+
+```{r}
+city.y <- data[data$city == "yes", ]
+city.n <- data[data$city != "yes", ]
+
+boxplot(log(wage)~edu, data = data, xlab = "Years of education", ylab = "Log of age", main = "Log (wage) vs Years of education"); abline(lm(log(city.y$wage)~city.y$edu), col = 2, lwd = 1.7); abline(lm(log(city.n$wage)~city.n$edu), col = 4, lwd = 1.7); legend("topleft", legend = c("City", "Not city"), col = c("red", "blue"), lwd = c(2,2))
+
+AIC(lm(log(wage) ~ race + edu + exp + city + reg + deg + emp, data = data)); AIC(lm(log(wage) ~ race + edu + exp + city + city*edu+ reg + deg + emp, data = data))
+```
+
+As we see the plots above, the red and blue lines intersect at a point. I made this plot to see if there is any effect between education and working areas. We may conclude there should be interaction effect between ¡°city¡± and ¡°edu¡±. We can find out the reduction in AIC when we add edu*city.
+
+```{r}
+south <- data[data$reg == "south", ]
+midwest <- data[data$reg == "midwest", ]
+northeast <- data[data$reg == "northeast", ]
+west <- data[data$reg == "west", ]
+
+plot(log(wage)~exp, data = data, cex = 0.5, col = "orange", main = "Log of wage vs Years of work experience", xlab = "Years of work experience"); abline(lm(log(midwest$wage)~midwest$exp), col = 1, lty = 2); abline(lm(log(west$wage)~west$exp), col = 2, lty = 5, lwd = 1.5); abline(lm(log(south$wage)~south$exp), col = 4, lwd = 1.5); abline(lm(log(northeast$wage)~northeast$exp), col = "purple", lwd = 1.5)
+
+AIC(lm(log(wage) ~ race + edu1 + edu2 + exp1 + exp2 + exp3 + city + city*edu1 + reg + deg + emp, data = data)); AIC(lm(log(wage) ~ race + edu1 + edu2 + exp1 + exp2 + exp3 + city + city*edu1+ reg.ne.dummy +reg.s.dummy + reg.ne.dummy*exp1 + reg.s.dummy*exp1 + deg + emp, data = data))
+```
+
+Now we can see there is interaction effect between region and work experience from the above codes. Although the graph is hard to decipher, we can realize south and northeast have different slopes from west and midwest. Therefore, I put south and northeast instead of just the region. Next, we will execute model validation.
+
+```{r}
+set.seed(0)
+index <- sample(1:nrow(data), nrow(data)*0.2, replace = F)
+train.data <- data[-index, ]
+test.data <- data[index, ]
+train.model <- lm(log(wage) ~ dummywhite + dummyother + edu1 + edu2 + exp1 + exp2 + exp3 + city + city*edu1+ reg.ne.dummy +reg.s.dummy + reg.ne.dummy*exp1 + reg.s.dummy*exp1 + emp, data = train.data)
+
+MSE <- sum((residuals(train.model))^2)/(nrow(train.data)-15)
+MSE.earlier <- sum((residuals(final.model))^2)/(nrow(data)-15)
+y.test <- test.data[, 1]
+x.test <- test.data[, -1]
+y.hat.test <- predict(train.model, newdata = x.test)
+MSPR <- mean((log(y.test) - y.hat.test)^2)
+round(c(MSPR = MSPR, MSE = MSE, MSE.earlier = MSE.earlier), 4)
+```
+
+The two MSEs and MSPR are around the same value so we can conclude our model fits out-of-sample similar to in-sample.
+
+## 3. Research Question
+
+1) We are going to test the null hypothesis that wage of African American males is statistically the same as that of Caucasian American males. Based on my final model, the coefficient for dummywhite must be equal to 0 to satisfy the null hypothesis because from $E[Y] = \beta_0 + \beta_wX_w + \beta_oX_o + ...$ , $\beta_w = 0$. Therefore, we can do t-test or f-test as below. 
+
+```{r}
+model.r <- lm(log(wage) ~ dummyother + edu1 + edu2 + exp1 + exp2 + exp3 + city + city*edu1+ reg.ne.dummy +reg.s.dummy + reg.ne.dummy*exp1 + reg.s.dummy*exp1 + emp, data = data)
+anova(model.r, final.model) # f-test
+summary(final.model) # t-test
+```
+
+As you see the ANOVA table and t-test, p-value of the test is very small. Therefore, we can reject the null hypothesis that the wage of African American males is the same as that of White American males.
+
+2) Now We are testing the null hypothesis that the wage of African American males is the same as that of the other males. We are going to test if $\beta_w = \beta_o = 0$.
+
+```{r}
+model.r1 <- lm(log(wage) ~ edu1 + edu2 + exp1 + exp2 + exp3 + city + city*edu1+ reg.ne.dummy +reg.s.dummy + reg.ne.dummy*exp1 + reg.s.dummy*exp1 + emp, data = data)
+anova(model.r1, final.model)
+```
+
+As we see the ANOVA table above, we can conclude we reject the null hypothesis. 
+
+## 4. Appendix
+
+###1) Diagnostic Process
+
+```{r}
+sdr <- rstudent(final.model)
+
+par(mfrow = c(3,2))
+qqnorm(sdr); abline(a = 0, b = 1, col = "orange")
+hist(sdr, prob = T, breaks = 50, 
+     xlab = "Studentized deleted residuals", main = "Histogram of studentized deleted residuals")
+plot(sdr, main = "Line plot", ylab = "Studentized deleted residuals");lines(sdr, col = 2); abline(a=0, b=0, lty = 3)
+plot(sdr~predict(final.model), main = "Residual plot", xlab = "y_hat", ylab = "Studentized deleted residuals"); abline(h=0, lty = 3); lines(supsmu(predict(final.model), sdr), col = 2)
+plot(sdr^2~predict(final.model), main = "Residual plot", xlab = "y_hat", ylab = "Squared sdr"); abline(h=0, lty = 3); lines(supsmu(predict(final.model), sdr^2), col = "orange")
+boxplot(sdr, ylab = "Studentized deleted residuals", main = "Box plot")
+```
+
+Although there are some outliers in the tails based on the qqplot, we see the final model roughly follows normal distribution. It seems there are no problems with violation of model assumptions.
+
+###2) Influential observations
+
+```{r}
+# DFBETAS
+n <- length(data$wage)
+par(mfrow = c(1, 2))
+plot(dfbetas(final.model)[, 2], main = "DFBETAS - Racewhite");abline(h = 2/sqrt(n), col = "orange"); abline(h = -2/sqrt(n), col = "orange")
+plot(dfbetas(final.model)[, 3], main = "DFBETAS - Raceother");abline(h = 2/sqrt(n), col = "orange"); abline(h = -2/sqrt(n), col = "orange")
+sum(dfbetas(final.model)[, 1] > abs(2/sqrt(n))); sum(dfbetas(final.model)[, 2] > abs(2/sqrt(n)))
+```
+
+Compared with the total number of data, the number of outliers that are thought to be influential is not very large. Therefore, we can proceed with the final model. Moreover, our loss from losing the data is substantial if we exclude all the outliers here.
+
